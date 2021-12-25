@@ -1,0 +1,136 @@
+#! /usr/bin/env bash
+
+if [[ $(id -u) == 0 ]]; then
+   echo "wroot: Cannot be run as root!" 
+   exit 1
+fi
+
+WS=$(readlink -f $BASH_SOURCE | awk -F "/wroot" '{ print $1 }')
+WR="$HOME/.wotroot"
+
+# @makes a dotfolder and other stuff in order for the rest of the script not to break
+dry_run () {
+	/usr/bin/mkdir -p $WR/images
+	/usr/bin/mkdir $WR/mounted
+}
+
+# @generates a random name using mktemp
+generate_name() {
+	/usr/bin/mktemp -u | /usr/bin/awk -F "." '{ print $2 }'
+}
+
+# @creates disk image for chroot to be stored
+# create_image name size
+create_image () {
+	if [ -z "$1" ]; then
+		name=$(generate_name)
+	else
+		name=$1
+	fi
+	if [ -z "$2" ]; then
+		size=1024
+	else
+		size=$2
+	fi
+	/usr/bin/dd if=/dev/urandom of=$WR/images/$name iflag=fullblock bs=1M count=$size
+	/usr/bin/mkfs.ext4 $WR/images/$name
+	/usr/bin/sync
+
+	mount_image $name
+	/usr/bin/mkdir $WR/mounted/$name/bin/
+	/bin/cp $WS/tools/bash-linux-x86_64 $WR/mounted/$name/bin/bash
+	umount_image $name
+}
+
+# @deletes a specified image
+# delete_image name
+delete_image () {
+	if [ -z "$1" ]; then
+                echo $FAIL+"Failed to delete image: Please specify name"
+                exit 1
+        else
+		name=$1
+	fi
+
+	rm $WR/images/$name
+}
+
+# @mounts a specified image to a loopX device
+# mount_image name
+mount_image () {
+	if [ -z "$1" ]; then
+                echo $FAIL+"Failed to mount image: Please specify name"
+		exit 1
+        else
+                name=$1
+        fi
+	
+	if [ -z $(losetup) ]; then
+		loop=0
+	else
+		loop=$((1 + `losetup | grep dev | awk '{ print $1 }' | awk -F "loop" '{ print $2 }' | head -n 1`))
+	fi
+
+	sudo losetup loop$loop $WR/images/$name
+	
+	/usr/bin/mkdir -p $WR/mounted/$name
+	sudo mount /dev/loop$loop $WR/mounted/$name
+	sudo chown -R "`whoami`:`whoami`" $WR/mounted/$name
+}
+
+# @unmounts a specified image from a loopX device using df to find it by name
+# umount_image name
+umount_image () {
+	if [ -z "$1" ]; then                                                                                                                                             
+                echo $FAIL+"Failed to unmount image: Please specify name"
+                exit 1
+        else
+                name=$1
+        fi
+	
+	loopdev=`df | grep "/mounted/$name" | awk '{printf $1}'`
+	sudo umount -R $WR/mounted/$name
+	rm -r $WR/mounted/$name
+        sudo losetup -d $loopdev
+}
+
+# @lists all the images in the .wotroot/images directory
+list_images () {
+	/bin/ls -l $WR/images
+}
+
+# @lists all the boxes mounted in the .wotroot/mounted directory
+list_boxes () {
+	/bin/ls -l $WR/mounted
+}
+
+# @mounts the specified image and chroots into it, tidies up and umounts when finished
+# chroot_image name
+chroot_image () {
+	if [ -z "$1" ]; then                                                                                                                                             
+                echo $FAIL+"Failed to create chroot: Please specify name"
+                exit 1
+        else
+                name=$1
+        fi
+
+	mount_image $name
+	sudo chroot $WR/mounted/$name bash
+	umount_image $name
+}
+
+if [ -z $1 ]; then
+	echo "WOT Project wotroot, version 0.0.1"
+	echo -e "\twroot [command] [args]"
+	echo "Commands:"
+	echo -e "\tlist_images\t\t\t\t\tLists all images"
+	echo -e "\tlist_boxes\t\t\t\t\tLists all live boxes"
+	echo -e "\tcreate_image [?name=mktemp] [?size=1024] \tCreates and initializes a new image"
+	echo -e "\tdelete_image [name]\t\t\t\tDeletes the specified image"
+	echo -e "\tchroot_image [name]\t\t\t\tchroots into the specified image"
+	echo -e "\tmount_image [name]\t\t\t\tMounts the specified image"
+	echo -e "\tumount_image [name]\t\t\t\tUnmounts the specified image"
+	exit 1
+fi
+
+$@
