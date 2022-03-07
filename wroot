@@ -37,8 +37,8 @@ create_image () {
 	/usr/bin/sync
 
 	mount_image $name
-	/usr/bin/mkdir $WR/mounted/$name/bin/
-	/bin/cp $WS/tools/bash-linux-x86_64 $WR/mounted/$name/bin/bash
+	/bin/cp -r $WS/tools/rootfs/* $WR/mounted/$name/
+	sudo unshare --mount --uts --ipc --net --pid --fork sudo chroot $WR/mounted/$name bash -c "/bin/busybox --install -s /bin"
 	umount_image $name
 }
 
@@ -65,7 +65,8 @@ mount_image () {
                 name=$1
         fi
 	
-	if [ -z $(losetup) ]; then
+	tmpvar="$(losetup | grep dev | awk '{ print $1 }' | awk -F "loop" '{ print $2 }' | head -n 1)"
+	if [ -z "${tmpvar}" ]; then
 		loop=0
 	else
 		loop=$((1 + `losetup | grep dev | awk '{ print $1 }' | awk -F "loop" '{ print $2 }' | head -n 1`))
@@ -89,9 +90,9 @@ umount_image () {
         fi
 	
 	loopdev=`df | grep "/mounted/$name" | awk '{printf $1}'`
+	sudo losetup -d $loopdev
 	sudo umount -R $WR/mounted/$name
 	rm -r $WR/mounted/$name
-        sudo losetup -d $loopdev
 }
 
 # @lists all the images in the .wotroot/images directory
@@ -115,7 +116,7 @@ chroot_image () {
         fi
 
 	mount_image $name
-	sudo chroot $WR/mounted/$name bash
+	sudo unshare --mount --uts --ipc --pid --fork sudo chroot $WR/mounted/$name bash
 	umount_image $name
 }
 
